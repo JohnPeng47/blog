@@ -1,0 +1,455 @@
+888 by crp
+
+First I ran a strace on the binary just to see what kind of information I can glean right off the bat.
+It seems like a couple of signal handlers for SIGTRAP. At this point, I had no idea why it would want to 
+do this so let's move on.
+
+john@john-GL62M-7RDX:~/crackmes/888/888$ strace ./888
+execve("./888", ["./888"], [/* 62 vars */]) = 0
+strace: [ Process PID=3899 runs in 32 bit mode. ]
+signal(SIGTRAP, 0x804820a)              = 0 (SIG_DFL)
+--- SIGTRAP {si_signo=SIGTRAP, si_code=SI_KERNEL} ---
+signal(SIGTRAP, 0x804820a)              = 0 (SIG_DFL)
+sigreturn({mask=[]})                    = 134513362
+signal(SIGFPE, 0x8048070)               = 0 (SIG_DFL)
+--- SIGTRAP {si_signo=SIGTRAP, si_code=SI_KERNEL} ---
+signal(SIGTRAP, 0x804820a)              = 0 (SIG_DFL)
+sigreturn({mask=[]})                    = -1 ESRCH (No such process)
+write(1, "NO\r\n", 4NO
+)                   = 4
+exit(0)                                 = ?
++++ exited with 0 +++
+
+Running strings ...
+
+john@john-GL62M-7RDX:~/crackmes/888/888$ strings ./888
+X3Bf
+,$GOOD
+x:^1
+^[Y^
+Ht	Ht
+5ARGSu
+tI-OOPS
+
+Looking at the sparse output, we can safely assume that it's hand written assembly and has not seen the ininsides of a compiler, since all of the usual libc symbols 
+are missing.
+
+Proceeding to static analysis with radare2 ...
+Because it is hand written assembly, there is a very good chance that there is some osbfuscation involved.Indeed, we can see that at what looks like garbage instruction at:
+	
+	0x08048246      e868759214     call 0x1c96f7b3 
+
+This is caused by the disassembler disassembling at the wrong alignment, due to the two proceeding jumps. Although what seems like two conditional jumps stacked together, 
+only the first jump instruction is a realjump, while the second one is just put there to screw up the disassembler. If we look at the preceding instruction, "or al, al", 
+since eax is always initialized to zero at this point of the code, the "or" will always set the ZF flag, and thus ALWAYS triggering the "je" (jmp if ZF = 0). 
+
+[0x0804823f]> pD
+        :   ;-- entry0:
+        :   ;-- eip:
+        :   0x0804823f      90             nop
+        :   0x08048240      08c0           or al, al
+       ,==< 0x08048242      7403           je 0x8048247  <---- unconditional jmp
+      ,===< 0x08048244      7512           jne 0x8048258   <---- messes up disassembly
+      ||:   0x08048246      e868759214     call 0x1c96f7b3   <---- nonsense instruction
+      | :   0x0804824b      18812c241010   sbb byte [ecx + 0x1010242c], al
+      | :   0x08048251      1010           adc byte [eax], dl
+      | :   0x08048253      e801000000     call 0x8048259
+      `-`=< 0x08048258      7481           je 0x80481db
+            0x0804825a      0424           add al, 0x24                ; '$'
+            0x0804825c      0800           or byte [eax], al
+            0x0804825e      0000           add byte [eax], al
+            0x08048260      c3             ret
+            0x08048261      f7e2           mul edx
+            0x08048263      52             push edx
+            0x08048264      e8408f0578     call 0x800a11a9
+
+So how exactly does the other jump instruction mess up the disassembly? Because at any conditional jump statements, the disassembler has to make a choice whether to disassemble 
+the true or false branch first. And typically, disassemblers will choose to disassemble the false branch first. Thus, the disassembler will automatically disassemble
+starting right after the conditional jump, and treat this as the valid disassembly. However, a problem occurs if the control flow ever jumped into the MIDDLE of the disassembled instruction.
+Then the disassembler has no way of representing this new instruction since it has already committed to the disassembly. 
+
+TODO: include a ascii diagram ala PMA
+
+In our example, everything after "jne" is garbage. This is because the disassembler started disassembling right ater the false branch of "jne" starting 0x08048246, instead of disassembling at
+0x8048247, which is the actual program execution flow. And due to multi-byte instruction in x86, starting disassembling at a wrong offset produces valid, but ultimately garbage instruction.
+
+	0x08048242      7403           je 0x8048247  <---- unconditional jmp
+	0x08048244      7512           jne 0x8048258   <---- messes up disassembly
+	0x08048246      e868759214     call 0x1c96f7b3
+	0x0804824b      18812c241010   sbb byte [ecx + 0x1010242c], al
+
+The way to fix this is to reassign 3 bytes starting at jne from code to data (so the diassembler will ignore it). This could done in radare2 by going to visual-disassembly mode with V, and 
+then using d+b to reassign bytes to data. The result after is:
+
+      ,===< 0x08048242      7403           je 0x8048247                
+     ,====< 0x08048244      .byte 0x75                                                                
+     |||:   0x08048245      .byte 0x12                                                                
+     |||:   0x08048246      .byte 0xe8                                                                
+     |`---> 0x08048247      6875921418     push 0x18149275   <--- more obfuscation, to mess up xrefs 
+     | |:   0x0804824c      812c24101010.  sub dword [esp], 0x10101010 
+
+
+
+Where we can now follow along. At this point, it is clear that obfuscation is heavily used in the rest of the binary, so I switched over to gdb (debugging with radare2 is possible but I am
+not too familiar with it at the mo). 
+
+pd @ 0x8048259
+       :   0x08048240      08c0           or al, al                                                  
+       ,==< 0x08048242      7403           je 0x8048247                ;[1]                           
+      ,===< 0x08048244      .byte 0x75                                                                      ||:   0x08048245      .byte 0x12                                                                
+      ||:   0x08048246      .byte 0xe8                                                                
+      |`--> 0x08048247      6875921418     push 0x18149275                                            
+      | :   0x0804824c      812c24101010.  sub dword [esp], 0x10101010                                
+      | :   0x08048253      e801000000     call 0x8048259   
+	   ``=< 0x08048258      7481           je 0x80481db  
+
+pD 20 @ 0x8048259
+            0x08048259      810424080000.  add dword [esp], 8
+            0x08048260      c3             ret
+
+After this ret, we will be jumping to the address 0x08048258 + 8 = 0x08048260 .. ok so more obsfuscation. The double ret essentially just jumps to esp + 4, which is 0x18149275 - 0x10101010 = 
+0x8048265:
+		
+[0x0804823f]> pD 70 @ 0x8048265
+            0x08048265      40             inc eax
+            0x08048266      8f0578830408   pop dword [0x8048378]
+            0x0804826c      85c0           test eax, eax
+        ,=< 0x0804826e      7415           je 0x8048285
+        |   0x08048270      6885820408     push 0x8048285
+        |   0x08048275      ff0424         inc dword [esp]
+        |   0x08048278      6821820408     push 0x8048221
+        |   0x0804827d      810424020000.  add dword [esp], 2
+        |   0x08048284      c3             ret
+			
+After some more address calculations, we end up jumping to 0x8048223:
+
+[0x0804823f]> pD 40 @ 0x8048223
+            0x08048223      31c0           xor eax, eax
+            0x08048225      b032           mov al, 0x32                
+            0x08048227      b902000000     mov ecx, 2
+        .-> 0x0804822c      fec8           dec al
+        `=< 0x0804822e      e2fc           loop 0x804822c
+            0x08048230      29db           sub ebx, ebx
+            0x08048232      b305           mov bl, 5
+            0x08048234      b90b820408     mov ecx, 0x804820b
+            0x08048239      49             dec ecx
+        ,=< 0x0804823a      e936010000     jmp 0x8048375
+
+Looks like its setting up for syscall, since its modifying the eax, ecx and ebx registers. Before the jmp to 0x8048375, the registers hold:
+
+			eax = 48
+			ebx = 5
+			ecx = 0x804820a
+
+[0x0804823f]> pD 10 @0x8048375
+            0x08048375      cd80           int 0x80
+            0x08048377      c3             ret
+
+Seems like it registers a signal handler at 0x804820a. Let's take a look at that address:
+
+[0x0804823f]> pD 40 @ 0x804820a
+            0x0804820a      ff057c830408   inc dword [0x804837c]
+            0x08048210      c70580830408.  mov dword [0x8048380], 0x5b54d103 ; [0x8048380:4]=0
+            0x0804821a      29c0           sub eax, eax
+            0x0804821c      40             inc eax
+            0x0804821d      f7d8           neg eax
+        ,=< 0x0804821f      7802           js 0x8048223
+
+It seems like it moves some stuff into 0x8048380, and possibly some kind of counter at 0x8048380. Let run a xref (fingers crossed theres no obsfuscation) 
+for these addresses, to see what they're used for (cross-references in radare could be found with axt <addr>). No luck :( 
+Looks like we're back to stepping through the program when we come across this snippet:
+
+[0x0804823f]> pD 40 @ 0x8048286
+            0x08048286      b8d2820400     mov eax, 0x482d2
+            0x0804828b      01d8           add eax, ebx  ; eax = 0x482d7
+            0x0804828d      29c3           sub ebx, eax  ; ebx = 0x5 - 0x482d7 = 0xfffb7d2e
+            0x0804828f      01d8           add eax, ebx  ; eax = 0x5 
+            0x08048291      f7db           neg ebx       ; ebx = 0x482d2
+        ,=< 0x08048293      7905           jns 0x804829a <--- always taken
+       ,==< 0x08048295      e903000000     jmp 0x804829d
+
+Essentially just a convoluted way to "xchg" eax and ebx. Following the jump:
+
+[0x0804823f]> pD 60 @ 0x804829a
+        :   ; CODE XREF from 0x08048293 (entry0 + 84)
+        :   0x0804829a      68aa820408     push 0x80482aa
+        :   0x0804829f      c70584830408.  mov dword [0x8048384], 0xd4a08f90 ; [0x8048384:4]=0
+        :   0x080482a9      c3             ret
+        :   ; DATA XREF from 0x0804829a (entry0 + 91)
+        :   0x080482aa      81cb00000008   or ebx, 0x8000000  ; ebx = 0x8000000 | 0x482d7 = 0x80482d2
+        :   0x080482b0      43             inc ebx            ; ebx = 0x80482d3
+        :   0x080482b1      31c3           xor ebx, eax       
+        :   0x080482b3      31d8           xor eax, ebx		
+        :   0x080482b5      31c3           xor ebx, eax       ; eax = 0x80482d3, ebx = 5
+        :   0x080482b7      48             dec eax
+        :   0x080482b8      53             push ebx 
+        :   0x080482b9      93             xchg eax, ebx      ; ebx = 0x80482d2
+        :   0x080482ba      b033           mov al, 0x33       
+        :   0x080482bc      c0e002         shl al, 2  		  ; 0x33 << 2 = 0xcc
+        :   0x080482bf      8803           mov byte [ebx], al 
+        :   0x080482c1      93             xchg eax, ebx
+        :   0x080482c2      5b             pop ebx
+        :   0x080482c3      48             dec eax
+       ,==< 0x080482c4      750a           jne 0x80482d0  <-- always taken
+
+The triple xor is well known assembler trick to swap 2 registers. A 'cc' is written to the address 0x80482d2, presumably to trigger the signal handler
+that we have just registered. Continuing execution until 0x080482d2, we hit the 'cc'd instruction. But no signalhandler was triggered. At 0x080482d3 we see the 
+value at 0x8048380 being loaded into eax, a subsequent subtraction, and finally a call to the result. 
+
+	[0x0804823f]> pD 40 @ 0x080482d3
+            0x080482d3      a180830408     mov eax, dword [0x8048380]  ; [0x8048380:4]=0
+            0x080482d8      85c0           test eax, eax
+        ,=< 0x080482da      7449           je 0x8048325
+        |   0x080482dc      2d4f4f5053     sub eax, 0x53504f4f
+        |   0x080482e1      ffd0           call eax
+
+It seems like we need to trigger the signalhandler in order to load something at 0x8048380, or else we will jump to garbage at 0x8048325. But how do I do 
+this in gdb? It took some googling but it turns out that:
+
+	1) SIGTRAP == int 3 == opcode 'cc'
+	2) GDB uses this functionality to implement breakpoints, by replacing the first byte of an instruction with the opcode 'cc'. When the processor 
+	encounters the 'cc' byte, it will execute a software trap, generating a SIGTRAP 
+	3) GDB has a default SIGTRAP handler (pause execution, inspect/set registers, peek at memory, etc.)
+
+It appears that GDB's own sighandler is consuming the SIGTRAP, and thus, our newly registered handler is not executing. Googling some more, I found that we 
+can turn off the default handler with:
+	
+	handler SIGTRAP pass nostop
+
+Stepping to the next instruction will result in a jump to the signal handler at 0x804829a. We need to turn on the default handler right after with:
+
+	handle SIGTRAP nopass stop
+
+Or else no handlers will be there to handler our SIGTRAP. Finally, the memory at 0x8048380, and we can "call" the right address: 
+
+    [0x0804823f]> pD 40 @ 0x080482d3
+            0x080482d3      a180830408     mov eax, dword [0x8048380]  ; eax = 0x5b54d103
+            0x080482d8      85c0           test eax, eax
+        ,=< 0x080482da      7449           je 0x8048325
+        |   0x080482dc      2d4f4f5053     sub eax, 0x53504f4f ; eax = 0x80481b4
+        |   0x080482e1      ffd0           call eax
+
+
+ 0x53504f4f 
+
+
+
+PART2: Looping Through Env Variables
+
+?? not sure what this section does except to call 0x8048052
+[0x0804823f]> pd 20 @ 0x80481b4
+0x080481b4 8f0588830408 pop dword [0x8048388]
+.-> 0x080481ba 58 pop eax
+: 0x080481bb 09c0 or eax, eax
+,==< 0x080481bd 7407 je 0x80481c6
+|: 0x080481bf 3541524753 xor eax, 0x53475241
+|`=< 0x080481c4 75f4 jne 0x80481ba
+`--> 0x080481c6 85c0 test eax, eax
+,=< 0x080481c8 7401 je 0x80481cb
+| 0x080481ca e88b1c2409 call 0x11289e5a
+::: 0x080481cf db invalid
+:::,=< 0x080481d0 742e je 0x8048200
+:::| 0x080481d2 e87bfeffff call 0x8048052
+
+
+stores pointer off the stack (env variable) stores in edi
+ecx is essentially used to calculate the length of each of these words
+
+[0x0804823f]> pD 20 @ 0x8048052
+0x08048052 877c2404 xchg dword [esp + 4], edi
+0x08048056 30c0 xor al, al
+0x08048058 31c9 xor ecx, ecx
+0x0804805a f7d1 not ecx
+0x0804805c fc cld
+0x0804805d f2ae repne scasb al, byte es:[edi]
+0x0804805f f7d1 not ecx <-- convert to positive (from 2's compl negative representation)
+0x08048061 49 dec ecx
+0x08048062 89c8 mov eax, ecx <-- move length of string into eax
+
+
+Compares the first 3bytes of an env variable declaration to "key":
+
+0x80481e5 mov ecx, dword ptr [ebx]
+0x80481e7 and ecx, 0xffffff <-- zeros the MSB
+0x80481ed cmp ecx, 0x79656b <--"key"
+0x80481f3 jne 0x80481cb
+
+► 0x80481f5 push ebx
+0x80481f6 push 0x80481cb
+0x80481fb jmp 0x804813e
+
+
+Looks for "="
+► 0x8048147 lodsb al, byte ptr [esi]
+0x8048148 cmp al, 0x3d <-- looks for "="
+0x804814a je 0x8048152
+
+
+PART3: Checking
+ [0x08048230]> pD 30 @ 0x80480d5
+.-> 0x080480d5 ac lodsb al, byte [esi]
+: 0x080480d6 08c0 or al, al
+,==< 0x080480d8 7412 je 0x80480ec
+|: 0x080480da 3c30 cmp al, 0x30 ; '0' ; 48
+,===< 0x080480dc 7c15 jl 0x80480f3
+||: 0x080480de 3c39 cmp al, 0x39 ; '9' ; 57
+,====< 0x080480e0 7f11 jg 0x80480f3
+|||: 0x080480e2 2c30 sub al, 0x30 ; '0'
+|||: 0x080480e4 93 xchg eax, ebx
+|||: 0x080480e5 f7e1 mul ecx
+|||: 0x080480e7 93 xchg eax, ebx
+|||: 0x080480e8 01c3 add ebx, eax
+|||`=< 0x080480ea ebe9 jmp 0x80480d5
+||`--> 0x080480ec 89d8 mov eax, ebx
+|| ,=< 0x080480ee e904000000 jmp 0x80480f7o
+
+Python code for above operation:
+for i in range(1,9):
+sum = sum * 10 + i;
+
+PART 4: Key1 and Key2
+
+[0x0804823f]> pD 70 @ 0x8048158
+0x08048158 85c0 test eax, eax
+,=< 0x0804815a 783a js 0x8048196
+| 0x0804815c 5e pop esi
+| 0x0804815d 31c9 xor ecx, ecx
+| 0x0804815f 8a5e03 mov bl, byte [esi + 3] ; [0x3:1]=255 ; 3
+| 0x08048162 80eb31 sub bl, 0x31 ; '1'
+,==< 0x08048165 741b je 0x8048182
+|| 0x08048167 fecb dec bl
+,===< 0x08048169 7405 je 0x8048170
+,====< 0x0804816b e927000000 jmp 0x8048197
+|||| ; CODE XREF from 0x08048169 (fcn.080480c5 + 164)
+|`---> 0x08048170 810d8c830408. or dword [0x804838c], 2
+| || 0x0804817a 81c104000000 add ecx, 4
+|,===< 0x08048180 eb0a jmp 0x804818c
+|||| ; CODE XREF from 0x08048165 (fcn.080480c5 + 160)
+||`--> 0x08048182 810d8c830408. or dword [0x804838c], 1
+|| | ; CODE XREF from 0x08048180 (fcn.080480c5 + 187)
+|`---> 0x0804818c 81c190830408 add ecx, 0x8048390
+| | 0x08048192 8901 mov dword [ecx], eax
+| ,==< 0x08048194 eb01 jmp 0x8048197
+| || ; CODE XREF from 0x0804814e (fcn.080480c5 + 137)
+| || ; CODE XREF from 0x0804815a (fcn.080480c5 + 149)
+| |`-> 0x08048196 5e pop esi
+| | ; CODE XREF from 0x0804816b (fcn.080480c5 + 166)
+| | ; CODE XREF from 0x08048194 (fcn.080480c5 + 207)
+`-`--> 0x08048197 5b pop ebx
+0x08048198 59 pop ecx
+0x08048199 5e p0x080482e3op esi
+0x0804819a c20400 ret 4
+
+Modifies 0x804838c, possibly as a counter for how many keys encountered
+Also stores the key value at:
+0x8048390 for key1
+0x8048394 for key2
+
+
+After all enviroment variables have been iterated over, enter this loop
+
+: 0x080482e3 6866830408 push 0x8048366
+: 0x080482e8 6825820408 push 0x8048225 //0x8048325
+: 0x080482ed 68a1810408 push 0x80481a1 //0x804819d --> post syscall routine
+: 0x080482f2 68544c0508 push 0x8054c54 //0x804810b --> syscall #2
+:: 0x080482f7 0fbae116 bt ecx, 0x16
+,===< 0x080482fb 7301 jae 0x80482fe
+|:`=< 0x080482fd .byte 0x75 <-- some more anti-disassembly
+|: ; CODE XREF from 0x080482fb (entry0 + 188)
+`---> 0x080482fe 812c2449cb00. sub dword [esp], 0xcb49
+: 0x08048305 8b442404 mov eax, dword [esp + 4] ; [0x4:4]=-1 ; 4
+: 0x08048309 48 dec eax
+: 0x0804830a 2d03000000 sub eax, 3
+: 0x0804830f 89442404 mov dword [esp + 4], eax
+: 0x08048313 8b442408 mov eax, dword [esp + 8] ; [0x8:4]=-1 ; 8
+: 0x08048317 b900010000 mov ecx, 0x100 ; 256
+: ; CODE XREF from 0x0804831d (entry0 + 222)
+:.-> 0x0804831c 40 inc eax
+:`=< 0x0804831d e2fd loop 0x804831c
+: 0x0804831f 89442408 mov dword [esp + 8], eax
+: 0x08048323 c3 ret
+
+Basically pushes a bunch of addresses onto the stack and modifies them in registers, for some more obfuscation. The above block returns to:
+
+[0x0804823f]> pD 70 @ 0x804810b (0x8054c54 - 0xcb49)
+0x0804810b 31c0 xor eax, eax
+0x0804810d b038 mov al, 0x38 ; '8' ; 56
+0x0804810f b902000000 mov ecx, 2
+0x08048114 c1e102 shl ecx, 2
+. 0x08048117 fec8 dec al
+` 0x08048119 e2fc loop 0x8048117
+0x0804811b 29db sub ebx, ebx
+0x0804811d b301 mov bl, 1
+0x0804811f c0e303 shl bl, 3
+0x08048122 b96e800408 mov ecx, 0x804806e
+0x08048127 41 inc ecx
+0x08048128 41 inc ecx
+0x08048129 e947020000 jmp 0x8048375
+
+which sets up the syscall for another signal handler SIGPE? at address 0x8048070
+
+After setting up signal, jumps to the first address pushed onto the stack; just checks that both keys are set, and causes a div by 0 error, triggering the signal handler
+0x0804819d a18c830408 mov eax, dword [0x804838c] ; [0x804838c:4]=0
+0x080481a2 2503000000 and eax, 3
+0x080481a7 48 dec eax
+,=< 0x080481a8 7409 je 0x80481b3
+| 0x080481aa 48 dec eax
+,==< 0x080481ab 7406 je 0x80481b3
+|| 0x080481ad 48 dec eax
+,===< 0x080481ae 7503 jne 0x80481b3
+||| 0x080481b0 91 xchg eax, ecx
+||| 0x080481b1 f7f1 div ecx
+```-> 0x080481b3 c3 ret
+
+PART 5: S SIGFPE Handler
+[0x0804823f]> pD 100 @ 0x8048070
+0x08048070 57 push edi
+0x08048071 bfb1810408 mov edi, 0x80481b1
+0x08048076 b902000000 mov ecx, 2
+0x0804807b b090 mov al, 0x90 ; 144
+0x0804807d f3aa rep stosb byte es:[edi], al
+0x0804807f 5f pop edi
+0x08048080 a18c830408 mov eax, dword [0x804838c] ; [0x804838c:4]=0
+0x08048085 2503000000 and eax, 3
+0x0804808a 3d03000000 cmp eax, 3 ; 3
+,=< 0x0804808f 7532 jne 0x80480c3
+| 0x08048091 a190830408 mov eax, dword [0x8048390] ; [0x8048390:4]=0
+| 0x08048096 8b0d94830408 mov ecx, dword [0x8048394] ; [0x8048394:4]=0
+| 0x0804809c 81f900100000 cmp ecx, 0x1000
+,==< 0x080480a2 7c1f jl 0x80480c3
+|| 0x080480a4 3d00100000 cmp eax, 0x1000
+,===< 0x080480a9 7c18 jl 0x80480c3
+||| 0x080480ab f7e1 mul ecx
+||| 0x080480ad b901000100 mov ecx, 0x10001
+||| 0x080480b2 f7f1 div ecx
+||| 0x080480b4 89d0 mov eax, edx
+||| 0x080480b6 48 dec eax
+,====< 0x080480b7 750a jne 0x80480c3
+|||| 0x080480b9 6875d0534c push 0x4c53d075
+,=====< 0x080480be e940000000 jmp 0x8048103
+|````-> 0x080480c3 c3 ret
+
+Algorithm:
+1. checks key1 and key2 are both greater than 0x1000 (4096)
+2. multiplies key1 with key2
+3. divide result by 0x10001 (65537) *remainder stored in EDX registers for DIV instructions
+4. subtract 1 from remainder
+
+so we need key1 * key2 = 65538
+
+handle SIGTRAP pass nostop
+handle SIGTRAP nopass stop
+
+
+      xchg dword [esp + 4], edi
+            0x08048056      30c0           xor al, al
+            0x08048058      31c9           xor ecx, ecx
+            0x0804805a      f7d1           not ecx
+            0x0804805c      fc             cld
+            0x0804805d      f2ae           repne scasb al, byte es:[edi]
+            0x0804805f      f7d1           not ecx
+            0x08048061      49             dec ecx
+            0x08048062      89c8           mov eax, ecx
+            0x08048064      877c2404       xchg dword [esp + 4], edi
+            0x08048068      c20400         ret 4
+
