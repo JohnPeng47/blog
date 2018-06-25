@@ -31,17 +31,18 @@ Ht	Ht
 5ARGSu
 tI-OOPS
 
-Looking at the sparse output, we can safely assume that it's hand written assembly and has not seen the ininsides of a compiler, since all of the usual libc symbols 
-are missing.
+Looking at the sparse output, we can safely assume that it's hand written assembly and has not seen the insides of a compiler, since all of the usual libc symbols are missing.
 
 Proceeding to static analysis with radare2 ...
-Because it is hand written assembly, there is a very good chance that there is some osbfuscation involved.Indeed, we can see that at what looks like garbage instruction at:
+Because it is hand written assembly, there is a very good chance that there is some osbfuscation involved. Indeed, we can see 
+that at what looks like garbage instruction at:
 	
 	0x08048246      e868759214     call 0x1c96f7b3 
 
-This is caused by the disassembler disassembling at the wrong alignment, due to the two proceeding jumps. Although what seems like two conditional jumps stacked together, 
-only the first jump instruction is a realjump, while the second one is just put there to screw up the disassembler. If we look at the preceding instruction, "or al, al", 
-since eax is always initialized to zero at this point of the code, the "or" will always set the ZF flag, and thus ALWAYS triggering the "je" (jmp if ZF = 0). 
+This is caused by the disassembler disassembling at the wrong alignment, due to the two proceeding jumps. Although what seems like two 
+conditional jumps stacked together, only the first jump instruction is a realjump, while the second one is just put there to screw up 
+the disassembler. If we look at the preceding instruction, "or al, al", since eax is always initialized to zero at this point of the 
+code, the "or" will always set the ZF flag, and thus ALWAYS triggering the "je" (jmp if ZF = 0). 
 
 [0x0804823f]> pD
         :   ;-- entry0:
@@ -63,20 +64,25 @@ since eax is always initialized to zero at this point of the code, the "or" will
             0x08048263      52             push edx
             0x08048264      e8408f0578     call 0x800a11a9
 
-So how exactly does the other jump instruction mess up the disassembly? Because at any conditional jump statements, the disassembler has to make a choice whether to disassemble the true or false branch first. And typically, disassemblers will choose to disassemble the false branch first. Thus, the disassembler will automatically disassemble starting right after the conditional jump, and treat this as the valid disassembly. However, a problem occurs if the control flow ever jumped into the MIDDLE of the disassembled instruction. Then the disassembler has no way of representing this new instruction since it has already committed to the disassembly. 
+So how exactly does the other jump instruction mess up the disassembly? Because at any conditional jump statements, the disassembler has
+to make a choice whether to disassemble the true or false branch first. And typically, disassemblers will choose to disassemble the 
+false branch first. Thus, the disassembler will automatically disassemble starting right after the conditional jump, and treat this as 
+the valid disassembly. However, a problem occurs if the control flow ever jumped into the MIDDLE of the disassembled instruction. Then 
+the disassembler has no way of representing this new instruction since it has already committed to the disassembly. 
 
 TODO: include a ascii diagram ala PMA
 
-In our example, everything after "jne" is garbage. This is because the disassembler started disassembling right ater the false branch of "jne" starting 0x08048246, instead of disassembling at
-0x8048247, which is the actual program execution flow. And due to multi-byte instruction in x86, starting disassembling at a wrong offset produces valid, but ultimately garbage instruction.
+In our example, everything after "jne" is garbage. This is because the disassembler started disassembling right ater the false branch of
+ "jne" starting 0x08048246, instead of disassembling at 0x8048247, which is the actual program execution flow. And due to multi-byte 
+instruction in x86, starting disassembling at a wrong offset produces valid, but ultimately garbage instruction.
 
 	0x08048242      7403           je 0x8048247  <---- unconditional jmp
 	0x08048244      7512           jne 0x8048258   <---- messes up disassembly
 	0x08048246      e868759214     call 0x1c96f7b3
 	0x0804824b      18812c241010   sbb byte [ecx + 0x1010242c], al
 
-The way to fix this is to reassign 3 bytes starting at jne from code to data (so the diassembler will ignore it). This could done in radare2 by going to visual-disassembly mode with V, and 
-then using d+b to reassign bytes to data. The result after is:
+The way to fix this is to reassign 3 bytes starting at jne from code to data (so the diassembler will ignore it). This could done in 
+radare2 by going to visual-disassembly mode with V, and then using d+b to reassign bytes to data. The result after is:
 
       ,===< 0x08048242      7403           je 0x8048247                
      ,====< 0x08048244      .byte 0x75                                                                
