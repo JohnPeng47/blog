@@ -65,25 +65,25 @@ point of the code, the "or" will always set the ZF flag, and thus ALWAYS trigger
             0x08048263      52             push edx
             0x08048264      e8408f0578     call 0x800a11a9
 
-So how exactly does the other jump instruction mess up the disassembly? Because at any conditional jump statements, the disassembler has
-to make a choice whether to disassemble the true or false branch first. And typically, disassemblers will choose to disassemble the 
-false branch first. Thus, the disassembler will automatically disassemble starting right after the conditional jump, and treat this as 
-the valid disassembly. However, a problem occurs if the control flow ever jumped into the MIDDLE of the disassembled instruction. Then 
-the disassembler has no way of representing this new instruction since it has already committed to the disassembly. 
+So how exactly does the other jump instruction mess up the disassembly? Because at any conditional jump statements, the 
+disassembler has to make a choice whether to disassemble the true or false branch first. And typically, disassemblers will choose to 
+disassemble the false branch first. Thus, the disassembler will automatically disassemble starting right after the conditional jump, and
+treat this as the valid disassembly. However, a problem occurs if the control flow ever jumped into the MIDDLE of the disassembled 
+instruction. Then the disassembler has no way of representing this new instruction since it has already committed to the disassembly. 
 
 TODO: include a ascii diagram ala PMA
 
-In our example, everything after "jne" is garbage. This is because the disassembler started disassembling right ater the false branch of
- "jne" starting 0x08048246, instead of disassembling at 0x8048247, which is the actual program execution flow. And due to multi-byte 
-instruction in x86, starting disassembling at a wrong offset produces valid, but ultimately garbage instruction.
+In our example, everything after "jne" is garbage. This is because the disassembler started disassembling right ater the false 
+branch of "jne" starting 0x08048246, instead of disassembling at 0x8048247, which is the actual program execution flow. And due to 
+multi-byte instruction in x86, starting disassembling at a wrong offset produces valid, but ultimately garbage instruction.
 
 	0x08048242      7403           je 0x8048247  <---- unconditional jmp
 	0x08048244      7512           jne 0x8048258   <---- messes up disassembly
 	0x08048246      e868759214     call 0x1c96f7b3
 	0x0804824b      18812c241010   sbb byte [ecx + 0x1010242c], al
 
-The way to fix this is to reassign 3 bytes starting at jne from code to data (so the diassembler will ignore it). This could done in 
-radare2 by going to visual-disassembly mode with V, and then using d+b to reassign bytes to data. The result after is:
+The way to fix this is to reassign 3 bytes starting at jne from code to data (so the diassembler will ignore it). This could 
+be done in radare2 by going to visual-disassembly mode with V, and then using d+b to reassign code bytes to data. The result after is:
 
       ,===< 0x08048242      7403           je 0x8048247                
      ,====< 0x08048244      .byte 0x75                                                                
@@ -93,9 +93,7 @@ radare2 by going to visual-disassembly mode with V, and then using d+b to reassi
      | |:   0x0804824c      812c24101010.  sub dword [esp], 0x10101010 
 
 
-
-Where we can now follow along. At this point, it is clear that obfuscation is heavily used in the rest of the binary, so I switched over to gdb (debugging with radare2 is possible but I am
-not too familiar with it at the mo). 
+At this point, it is clear that obfuscation is heavily used in the rest of the binary, so I switched over to gdb (debugging with radare2 is possible but I am not too familiar with it at the mo). 
 
 pd @ 0x8048259
        :   0x08048240      08c0           or al, al                                                  
@@ -111,8 +109,8 @@ pD 20 @ 0x8048259
             0x08048259      810424080000.  add dword [esp], 8
             0x08048260      c3             ret
 
-After this ret, we will be jumping to the address 0x08048258 + 8 = 0x08048260 .. ok so more obsfuscation. The double ret essentially just jumps to esp + 4, which is 0x18149275 - 0x10101010 = 
-0x8048265:
+After this ret, we will be jumping to the address 0x08048258 + 8 = 0x08048260 .. ok so more obsfuscation. The double ret 
+essentially just jumps to esp + 4, which is 0x18149275 - 0x10101010 = 0x8048265:
 		
 [0x0804823f]> pD 70 @ 0x8048265
             0x08048265      40             inc eax
@@ -139,7 +137,8 @@ After some more address calculations, we end up jumping to 0x8048223:
             0x08048239      49             dec ecx
         ,=< 0x0804823a      e936010000     jmp 0x8048375
 
-Looks like its setting up for syscall, since its modifying the eax, ecx and ebx registers. Before the jmp to 0x8048375, the registers hold:
+Looks like its setting up for syscall, since its modifying the eax, ecx and ebx registers. Before the jmp to 0x8048375, the 
+registers hold:
 
 			eax = 48
 			ebx = 5
@@ -159,8 +158,8 @@ Seems like it registers a signal handler at 0x804820a. Let's take a look at that
             0x0804821d      f7d8           neg eax
         ,=< 0x0804821f      7802           js 0x8048223
 
-It seems like it moves some stuff into 0x8048380, and possibly some kind of counter at 0x8048380. Let run a xref (fingers crossed theres no obsfuscation) 
-for these addresses, to see what they're used for (cross-references in radare could be found with axt <addr>). No luck :( 
+It seems like it moves some stuff into 0x8048380, and possibly some kind of counter at 0x8048380. Let run a xref (fingers 
+crossed theres no obsfuscation) for these addresses, to see what they're used for (cross-references in radare could be found with axt <addr>). No luck :( 
 Looks like we're back to stepping through the program when we come across this snippet:
 
 [0x0804823f]> pD 40 @ 0x8048286
@@ -196,9 +195,9 @@ Essentially just a convoluted way to "xchg" eax and ebx. Following the jump:
         :   0x080482c3      48             dec eax
        ,==< 0x080482c4      750a           jne 0x80482d0  <-- always taken
 
-The triple xor is well known assembler trick to swap 2 registers. A 'cc' is written to the address 0x80482d2, presumably to trigger the signal handler
-that we have just registered. Continuing execution until 0x080482d2, we hit the 'cc'd instruction. But no signalhandler was triggered. At 0x080482d3 we see the 
-value at 0x8048380 being loaded into eax, a subsequent subtraction, and finally a call to the result. 
+The triple xor is well known assembler trick to swap 2 registers. A 'cc' is written to the address 0x80482d2, presumably to 
+trigger the signal handler that we have just registered. Continuing execution until 0x080482d2, we hit the 'cc'd instruction. But no 
+signalhandler was triggered. At 0x080482d3 we see the value at 0x8048380 being loaded into eax, a subsequent subtraction, and finally a call to the result. 
 
 	[0x0804823f]> pD 40 @ 0x080482d3
             0x080482d3      a180830408     mov eax, dword [0x8048380]  ; [0x8048380:4]=0
@@ -207,24 +206,27 @@ value at 0x8048380 being loaded into eax, a subsequent subtraction, and finally 
         |   0x080482dc      2d4f4f5053     sub eax, 0x53504f4f
         |   0x080482e1      ffd0           call eax
 
-It seems like we need to trigger the signalhandler in order to load something at 0x8048380, or else we will jump to garbage at 0x8048325. But how do I do 
-this in gdb? It took some googling but it turns out that:
+It seems like we need to trigger the signalhandler in order to load something at 0x8048380, or else we will jump to garbage 
+at 0x8048325. But how do I do this in gdb? It took some googling but it turns out that:
 
 	1) SIGTRAP == int 3 == opcode 'cc'
-	2) GDB uses this functionality to implement breakpoints, by replacing the first byte of an instruction with the opcode 'cc'. When the processor 
+	2) GDB uses this functionality to implement breakpoints, by replacing the first byte of an instruction with the
+ opcode 'cc'. When the processor 
 	encounters the 'cc' byte, it will execute a software trap, generating a SIGTRAP 
 	3) GDB has a default SIGTRAP handler (pause execution, inspect/set registers, peek at memory, etc.)
 
-It appears that GDB's own sighandler is consuming the SIGTRAP, and thus, our newly registered handler is not executing. Googling some more, I found that we 
-can turn off the default handler with:
+It appears that GDB's own sighandler is consuming the SIGTRAP, and thus, our newly registered handler is not executing. 
+Googling some more, I found that we can turn off the default handler with:
 	
 	handler SIGTRAP pass nostop
 
-Stepping to the next instruction will result in a jump to the signal handler at 0x804829a. We need to turn on the default handler right after with:
+Stepping to the next instruction will result in a jump to the signal handler at 0x804829a. We need to turn on the default 
+handler right after with:
 
 	handle SIGTRAP nopass stop
 
-Or else no handlers will be there to handler our SIGTRAP. Finally, the memory at 0x8048380, and we can "call" the right address: 
+Or else no handlers will be there to handler our SIGTRAP. Finally, the memory at 0x8048380, and we can call the right 
+address: 
 
     [0x0804823f]> pD 40 @ 0x080482d3
             0x080482d3      a180830408     mov eax, dword [0x8048380]  ; eax = 0x5b54d103
