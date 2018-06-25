@@ -31,17 +31,19 @@ Ht	Ht
 5ARGSu
 tI-OOPS
 
-Looking at the sparse output, we can safely assume that it's hand written assembly and has not seen the insides of a compiler, since all of the usual libc symbols are missing.
+Looking at the sparse output, we can safely assume that it's hand written assembly and has not seen the insides of a compiler
+, since all of the usual libc symbols are missing.
 
 Proceeding to static analysis with radare2 ...
 Because it is hand written assembly, there is a very good chance that there is some osbfuscation involved. Indeed, we can see 
-that at what looks like garbage instruction at:
+what looks like garbage instruction at:
 	
 	0x08048246      e868759214     call 0x1c96f7b3 
 
-This is caused by the disassembler disassembling at the wrong alignment, due to the two proceeding jumps. Although what seems like 
-two conditional jumps stacked together, only the first jump instruction is a realjump, while the second one is just put there to screw up the disassembler. If we look at the preceding instruction, "or al, al", since eax is always initialized to zero at this point of the 
-code, the "or" will always set the ZF flag, and thus ALWAYS triggering the "je" (jmp if ZF = 0). 
+This is caused by the disassembler disassembling at the wrong alignment, due to the two proceeding jumps. Although what seems 
+like two conditional jumps stacked together, only the first jump instruction is a realjump, while the second one is just put there 
+to screw up the disassembler. If we look at the preceding instruction, "or al, al", since eax is always initialized to zero at this 
+point of the code, the "or" will always set the ZF flag, and thus ALWAYS triggering the "je" (jmp if ZF = 0). 
 
 [0x0804823f]> pD
         :   ;-- entry0:
