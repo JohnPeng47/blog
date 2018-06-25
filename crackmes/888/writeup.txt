@@ -39,9 +39,8 @@ that at what looks like garbage instruction at:
 	
 	0x08048246      e868759214     call 0x1c96f7b3 
 
-This is caused by the disassembler disassembling at the wrong alignment, due to the two proceeding jumps. Although what seems like two 
-conditional jumps stacked together, only the first jump instruction is a realjump, while the second one is just put there to screw up 
-the disassembler. If we look at the preceding instruction, "or al, al", since eax is always initialized to zero at this point of the 
+This is caused by the disassembler disassembling at the wrong alignment, due to the two proceeding jumps. Although what seems like 
+two conditional jumps stacked together, only the first jump instruction is a realjump, while the second one is just put there to screw up the disassembler. If we look at the preceding instruction, "or al, al", since eax is always initialized to zero at this point of the 
 code, the "or" will always set the ZF flag, and thus ALWAYS triggering the "je" (jmp if ZF = 0). 
 
 [0x0804823f]> pD
