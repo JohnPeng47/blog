@@ -236,218 +236,15 @@ address:
         |   0x080482e1      ffd0           call eax
 
 
- 0x53504f4f 
 
+After some more push/ret instructions, the address of the first enviroment variable is popped into edi, and execution 
+continues in the following block. Here, a combination of repne and scasb is used to iterate through each enviroment 
+variable and count the number of characters. Repne is a one byte ocpode prefix that can be appended to certain instructions
+to repeat execution until ecx = 0, or ZF = 1, decrementing ecx at each iteration. Scasb compares the byte held in si with 
+al, and continuing execution to the next instruction when they are equal. Else, it will increment si and repeat the comparison.
 
-
-PART2: Looping Through Env Variables
-
-?? not sure what this section does except to call 0x8048052
-[0x0804823f]> pd 20 @ 0x80481b4
-0x080481b4 8f0588830408 pop dword [0x8048388]
-.-> 0x080481ba 58 pop eax
-: 0x080481bb 09c0 or eax, eax
-,==< 0x080481bd 7407 je 0x80481c6
-|: 0x080481bf 3541524753 xor eax, 0x53475241
-|`=< 0x080481c4 75f4 jne 0x80481ba
-`--> 0x080481c6 85c0 test eax, eax
-,=< 0x080481c8 7401 je 0x80481cb
-| 0x080481ca e88b1c2409 call 0x11289e5a
-::: 0x080481cf db invalid
-:::,=< 0x080481d0 742e je 0x8048200
-:::| 0x080481d2 e87bfeffff call 0x8048052
-
-
-stores pointer off the stack (env variable) stores in edi
-ecx is essentially used to calculate the length of each of these words
-
-[0x0804823f]> pD 20 @ 0x8048052
-0x08048052 877c2404 xchg dword [esp + 4], edi
-0x08048056 30c0 xor al, al
-0x08048058 31c9 xor ecx, ecx
-0x0804805a f7d1 not ecx
-0x0804805c fc cld
-0x0804805d f2ae repne scasb al, byte es:[edi]
-0x0804805f f7d1 not ecx <-- convert to positive (from 2's compl negative representation)
-0x08048061 49 dec ecx
-0x08048062 89c8 mov eax, ecx <-- move length of string into eax
-
-
-Compares the first 3bytes of an env variable declaration to "key":
-
-0x80481e5 mov ecx, dword ptr [ebx]
-0x80481e7 and ecx, 0xffffff <-- zeros the MSB
-0x80481ed cmp ecx, 0x79656b <--"key"
-0x80481f3 jne 0x80481cb
-
-► 0x80481f5 push ebx
-0x80481f6 push 0x80481cb
-0x80481fb jmp 0x804813e
-
-
-Looks for "="
-► 0x8048147 lodsb al, byte ptr [esi]
-0x8048148 cmp al, 0x3d <-- looks for "="
-0x804814a je 0x8048152
-
-
-PART3: Checking
- [0x08048230]> pD 30 @ 0x80480d5
-.-> 0x080480d5 ac lodsb al, byte [esi]
-: 0x080480d6 08c0 or al, al
-,==< 0x080480d8 7412 je 0x80480ec
-|: 0x080480da 3c30 cmp al, 0x30 ; '0' ; 48
-,===< 0x080480dc 7c15 jl 0x80480f3
-||: 0x080480de 3c39 cmp al, 0x39 ; '9' ; 57
-,====< 0x080480e0 7f11 jg 0x80480f3
-|||: 0x080480e2 2c30 sub al, 0x30 ; '0'
-|||: 0x080480e4 93 xchg eax, ebx
-|||: 0x080480e5 f7e1 mul ecx
-|||: 0x080480e7 93 xchg eax, ebx
-|||: 0x080480e8 01c3 add ebx, eax
-|||`=< 0x080480ea ebe9 jmp 0x80480d5
-||`--> 0x080480ec 89d8 mov eax, ebx
-|| ,=< 0x080480ee e904000000 jmp 0x80480f7o
-
-Python code for above operation:
-for i in range(1,9):
-sum = sum * 10 + i;
-
-PART 4: Key1 and Key2
-
-[0x0804823f]> pD 70 @ 0x8048158
-0x08048158 85c0 test eax, eax
-,=< 0x0804815a 783a js 0x8048196
-| 0x0804815c 5e pop esi
-| 0x0804815d 31c9 xor ecx, ecx
-| 0x0804815f 8a5e03 mov bl, byte [esi + 3] ; [0x3:1]=255 ; 3
-| 0x08048162 80eb31 sub bl, 0x31 ; '1'
-,==< 0x08048165 741b je 0x8048182
-|| 0x08048167 fecb dec bl
-,===< 0x08048169 7405 je 0x8048170
-,====< 0x0804816b e927000000 jmp 0x8048197
-|||| ; CODE XREF from 0x08048169 (fcn.080480c5 + 164)
-|`---> 0x08048170 810d8c830408. or dword [0x804838c], 2
-| || 0x0804817a 81c104000000 add ecx, 4
-|,===< 0x08048180 eb0a jmp 0x804818c
-|||| ; CODE XREF from 0x08048165 (fcn.080480c5 + 160)
-||`--> 0x08048182 810d8c830408. or dword [0x804838c], 1
-|| | ; CODE XREF from 0x08048180 (fcn.080480c5 + 187)
-|`---> 0x0804818c 81c190830408 add ecx, 0x8048390
-| | 0x08048192 8901 mov dword [ecx], eax
-| ,==< 0x08048194 eb01 jmp 0x8048197
-| || ; CODE XREF from 0x0804814e (fcn.080480c5 + 137)
-| || ; CODE XREF from 0x0804815a (fcn.080480c5 + 149)
-| |`-> 0x08048196 5e pop esi
-| | ; CODE XREF from 0x0804816b (fcn.080480c5 + 166)
-| | ; CODE XREF from 0x08048194 (fcn.080480c5 + 207)
-`-`--> 0x08048197 5b pop ebx
-0x08048198 59 pop ecx
-0x08048199 5e p0x080482e3op esi
-0x0804819a c20400 ret 4
-
-Modifies 0x804838c, possibly as a counter for how many keys encountered
-Also stores the key value at:
-0x8048390 for key1
-0x8048394 for key2
-
-
-After all enviroment variables have been iterated over, enter this loop
-
-: 0x080482e3 6866830408 push 0x8048366
-: 0x080482e8 6825820408 push 0x8048225 //0x8048325
-: 0x080482ed 68a1810408 push 0x80481a1 //0x804819d --> post syscall routine
-: 0x080482f2 68544c0508 push 0x8054c54 //0x804810b --> syscall #2
-:: 0x080482f7 0fbae116 bt ecx, 0x16
-,===< 0x080482fb 7301 jae 0x80482fe
-|:`=< 0x080482fd .byte 0x75 <-- some more anti-disassembly
-|: ; CODE XREF from 0x080482fb (entry0 + 188)
-`---> 0x080482fe 812c2449cb00. sub dword [esp], 0xcb49
-: 0x08048305 8b442404 mov eax, dword [esp + 4] ; [0x4:4]=-1 ; 4
-: 0x08048309 48 dec eax
-: 0x0804830a 2d03000000 sub eax, 3
-: 0x0804830f 89442404 mov dword [esp + 4], eax
-: 0x08048313 8b442408 mov eax, dword [esp + 8] ; [0x8:4]=-1 ; 8
-: 0x08048317 b900010000 mov ecx, 0x100 ; 256
-: ; CODE XREF from 0x0804831d (entry0 + 222)
-:.-> 0x0804831c 40 inc eax
-:`=< 0x0804831d e2fd loop 0x804831c
-: 0x0804831f 89442408 mov dword [esp + 8], eax
-: 0x08048323 c3 ret
-
-Basically pushes a bunch of addresses onto the stack and modifies them in registers, for some more obfuscation. The above block returns to:
-
-[0x0804823f]> pD 70 @ 0x804810b (0x8054c54 - 0xcb49)
-0x0804810b 31c0 xor eax, eax
-0x0804810d b038 mov al, 0x38 ; '8' ; 56
-0x0804810f b902000000 mov ecx, 2
-0x08048114 c1e102 shl ecx, 2
-. 0x08048117 fec8 dec al
-` 0x08048119 e2fc loop 0x8048117
-0x0804811b 29db sub ebx, ebx
-0x0804811d b301 mov bl, 1
-0x0804811f c0e303 shl bl, 3
-0x08048122 b96e800408 mov ecx, 0x804806e
-0x08048127 41 inc ecx
-0x08048128 41 inc ecx
-0x08048129 e947020000 jmp 0x8048375
-
-which sets up the syscall for another signal handler SIGPE? at address 0x8048070
-
-After setting up signal, jumps to the first address pushed onto the stack; just checks that both keys are set, and causes a div by 0 error, triggering the signal handler
-0x0804819d a18c830408 mov eax, dword [0x804838c] ; [0x804838c:4]=0
-0x080481a2 2503000000 and eax, 3
-0x080481a7 48 dec eax
-,=< 0x080481a8 7409 je 0x80481b3
-| 0x080481aa 48 dec eax
-,==< 0x080481ab 7406 je 0x80481b3
-|| 0x080481ad 48 dec eax
-,===< 0x080481ae 7503 jne 0x80481b3
-||| 0x080481b0 91 xchg eax, ecx
-||| 0x080481b1 f7f1 div ecx
-```-> 0x080481b3 c3 ret
-
-PART 5: S SIGFPE Handler
-[0x0804823f]> pD 100 @ 0x8048070
-0x08048070 57 push edi
-0x08048071 bfb1810408 mov edi, 0x80481b1
-0x08048076 b902000000 mov ecx, 2
-0x0804807b b090 mov al, 0x90 ; 144
-0x0804807d f3aa rep stosb byte es:[edi], al
-0x0804807f 5f pop edi
-0x08048080 a18c830408 mov eax, dword [0x804838c] ; [0x804838c:4]=0
-0x08048085 2503000000 and eax, 3
-0x0804808a 3d03000000 cmp eax, 3 ; 3
-,=< 0x0804808f 7532 jne 0x80480c3
-| 0x08048091 a190830408 mov eax, dword [0x8048390] ; [0x8048390:4]=0
-| 0x08048096 8b0d94830408 mov ecx, dword [0x8048394] ; [0x8048394:4]=0
-| 0x0804809c 81f900100000 cmp ecx, 0x1000
-,==< 0x080480a2 7c1f jl 0x80480c3
-|| 0x080480a4 3d00100000 cmp eax, 0x1000
-,===< 0x080480a9 7c18 jl 0x80480c3
-||| 0x080480ab f7e1 mul ecx
-||| 0x080480ad b901000100 mov ecx, 0x10001
-||| 0x080480b2 f7f1 div ecx
-||| 0x080480b4 89d0 mov eax, edx
-||| 0x080480b6 48 dec eax
-,====< 0x080480b7 750a jne 0x80480c3
-|||| 0x080480b9 6875d0534c push 0x4c53d075
-,=====< 0x080480be e940000000 jmp 0x8048103
-|````-> 0x080480c3 c3 ret
-
-Algorithm:
-1. checks key1 and key2 are both greater than 0x1000 (4096)
-2. multiplies key1 with key2
-3. divide result by 0x10001 (65537) *remainder stored in EDX registers for DIV instructions
-4. subtract 1 from remainder
-
-so we need key1 * key2 = 65538
-
-handle SIGTRAP pass nostop
-handle SIGTRAP nopass stop
-
-
-      xchg dword [esp + 4], edi
+[0x0804823f]> pD 40 @ 0x8048052
+            0x08048052      877c2404       xchg dword [esp + 4], edi
             0x08048056      30c0           xor al, al
             0x08048058      31c9           xor ecx, ecx
             0x0804805a      f7d1           not ecx
@@ -458,4 +255,111 @@ handle SIGTRAP nopass stop
             0x08048062      89c8           mov eax, ecx
             0x08048064      877c2404       xchg dword [esp + 4], edi
             0x08048068      c20400         ret 4
+
+Further length checks are taken to ensure the enviroment variables remain within length 4 and 64. Then the first 3 letters of
+the enviroment variable is checked for the string "key". We can safely conclude that these enviroment variables will be
+used as inputs in the keygen process. 
+
+[0x0804823f]> pD 40 @ 0x80481d7
+      :::   0x080481d7      3d04000000     cmp eax, 4                  ; 4
+      `===< 0x080481dc      7ced           jl 0x80481cb
+       ::   0x080481de      3d40000000     cmp eax, 0x40               ; '@' ; 64
+       `==< 0x080481e3      7fe6           jg 0x80481cb
+        :   0x080481e5      8b0b           mov ecx, dword [ebx]
+        :   0x080481e7      81e1ffffff00   and ecx, 0xffffff
+        :   0x080481ed      81f96b657900   cmp ecx, 0x79656b  <--- "key"
+        `=< 0x080481f3      75d6           jne 0x80481cb
+            0x080481f5      53             push ebx
+            0x080481f6      68cb810408     push 0x80481cb
+
+
+The following snippet converts the string value of the key into an int:
+
+[0x0804823f]> pD 80 @ 0x80480c5
+            0x080480c5      56             push esi
+            0x080480c6      51             push ecx
+            0x080480c7      53             push ebx
+            0x080480c8      8b742410       mov esi, dword [esp + 0x10] ; [0x10:4]=-1 ; 16
+            0x080480cc      31c0           xor eax, eax
+            0x080480ce      31db           xor ebx, ebx
+            0x080480d0      b90a000000     mov ecx, 0xa
+        .-> 0x080480d5      ac             lodsb al, byte [esi]
+        :   0x080480d6      08c0           or al, al
+       ,==< 0x080480d8      7412           je 0x80480ec
+       |:   0x080480da      3c30           cmp al, 0x30                ; '0' ; 48
+      ,===< 0x080480dc      7c15           jl 0x80480f3
+      ||:   0x080480de      3c39           cmp al, 0x39                ; '9' ; 57
+     ,====< 0x080480e0      7f11           jg 0x80480f3
+     |||:   0x080480e2      2c30           sub al, 0x30                ; '0'
+     |||:   0x080480e4      93             xchg eax, ebx
+     |||:   0x080480e5      f7e1           mul ecx
+     |||:   0x080480e7      93             xchg eax, ebx
+     |||:   0x080480e8      01c3           add ebx, eax
+     |||`=< 0x080480ea      ebe9           jmp 0x80480d5
+     ||`--> 0x080480ec      89d8           mov eax, ebx
+     || ,=< 0x080480ee      e904000000     jmp 0x80480f7
+     ``---> 0x080480f3      0fbae81f       bts eax, 0x1f
+        `-> 0x080480f7      5b             pop ebx
+            0x080480f8      59             pop ecx
+            0x080480f9      5e             pop esi
+            0x080480fa      c20400         ret 4
+
+Looks like the the setup for another syscall. 
+[0x0804823f]> pD 70 @ 0x804810b
+            0x0804810b      31c0           xor eax, eax
+            0x0804810d      b038           mov al, 0x38                ; '8' ; 56
+            0x0804810f      b902000000     mov ecx, 2
+            0x08048114      c1e102         shl ecx, 2
+        .-> 0x08048117      fec8           dec al
+        `=< 0x08048119      e2fc           loop 0x8048117
+            0x0804811b      29db           sub ebx, ebx
+            0x0804811d      b301           mov bl, 1
+            0x0804811f      c0e303         shl bl, 3
+            0x08048122      b96e800408     mov ecx, 0x804806e
+            0x08048127      41             inc ecx
+            0x08048128      41             inc ecx
+			0x08048129      e947020000     jmp 0x8048375
+
+
+The signal handler contains the keygen algorithm. Turns out that there are two keys that we have to set:
+
+[0x0804823f]> pD 100 @ 0x8048070
+            0x08048070      57             push edi
+            0x08048071      bfb1810408     mov edi, 0x80481b1
+            0x08048076      b902000000     mov ecx, 2
+            0x0804807b      b090           mov al, 0x90                ; 144
+            0x0804807d      f3aa           rep stosb byte es:[edi], al
+            0x0804807f      5f             pop edi
+            0x08048080      a18c830408     mov eax, dword [0x804838c]  ; [0x804838c:4]=0
+            0x08048085      2503000000     and eax, 3
+            0x0804808a      3d03000000     cmp eax, 3                  ; 3
+        ,=< 0x0804808f      7532           jne 0x80480c3
+        |   0x08048091      a190830408     mov eax, dword [0x8048390]  ; [0x8048390:4]=0  <--- key1
+        |   0x08048096      8b0d94830408   mov ecx, dword [0x8048394]  ; [0x8048394:4]=0  <--- key2
+        |   0x0804809c      81f900100000   cmp ecx, 0x1000
+       ,==< 0x080480a2      7c1f           jl 0x80480c3
+       ||   0x080480a4      3d00100000     cmp eax, 0x1000
+      ,===< 0x080480a9      7c18           jl 0x80480c3
+      |||   0x080480ab      f7e1           mul ecx
+      |||   0x080480ad      b901000100     mov ecx, 0x10001
+      |||   0x080480b2      f7f1           div ecx
+      |||   0x080480b4      89d0           mov eax, edx
+      |||   0x080480b6      48             dec eax
+     ,====< 0x080480b7      750a           jne 0x80480c3
+     ||||   0x080480b9      6875d0534c     push 0x4c53d075
+    ,=====< 0x080480be      e940000000     jmp 0x8048103
+    |````-> 0x080480c3      c3             ret
+
+
+Algorithm:
+1. checks key1 and key2 are both greater than 0x1000 (4096)
+2. multiplies key1 with key2
+3. divide result by 0x10001 (65537) *remainder stored in EDX registers for DIV instructions
+4. subtract 1 from remainder
+
+Exporting the following variables did the trick:
+key1=65521; export key1; 
+key2=4096; export key2;
+
+
 
