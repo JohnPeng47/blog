@@ -32,8 +32,9 @@ to change its name to 'ocl.exe'
 4. At 0x00401133, the malware is dynamically initializing the encoded hostname ( 1qaz2wsx3edc) , and "ocl.exe"
 5. The encoded string 1qaz2wsx3edc and the pointer to a buffer holding a 32bit "key" to the subroutine at 0x401089.
 6. Domain name is www.practicalmalwareanalysis.com
-7. The subroutine at 0x401089 is a XOR decryption loop. The loop iterates 32 times (length of "www.practicalmalwareanalysis.com") and continuously XOR's a byte of string with the constant key. idiv is used to calculate the modulo
-so the XOR can "wrap around" when it exceeds the length of the string. 
+7. The subroutine at 0x401089 is a XOR decryption loop. The loop iterates 32 times (length of "www.practicalmalwareanalysis.com") and 
+continuously XOR's a byte of string with the constant key. idiv is used to calculate the modulo so the XOR can "wrap around" when it 
+exceeds the length of the string. 
 
 .text:004010EC mov     edx, [ebp+key] 
 .text:004010EF add     edx, [ebp+index] ; Add
