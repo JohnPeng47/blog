@@ -1,0 +1,61 @@
+PMA Lab 9_2
+
+1. Nothing interesting in the strings output
+2. Running the binary for the first time exists without any output
+
+3.  A strcmp makes sures that "ocl.exe" is part of the Module Filename, or else it exist. To get it to run, we have
+to change its name to 'ocl.exe'
+
+            0x004011fa      680e010000     push 0x10e                  ; 270
+            0x004011ff      8d8500fdffff   lea eax, [ebp - 0x300]
+            0x00401205      50             push eax
+            0x00401206      6a00           push 0
+            0x00401208      ff150c404000   call dword [sym.imp.KERNEL32.dll_GetModuleFileNameA] ;[1] ; 0x40400c ; "LE
+            0x0040120e      6a5c           push 0x5c                   ; '\' ; 92
+            0x00401210      8d8d00fdffff   lea ecx, [ebp - 0x300]
+            0x00401216      51             push ecx
+            0x00401217      e834030000     call 0x401550               ;[2] ; strrchr
+            0x0040121c      83c408         add esp, 8
+            0x0040121f      8945fc         mov dword [ebp - 4], eax
+            0x00401222      8b55fc         mov edx, dword [ebp - 4]
+            0x00401225      83c201         add edx, 1
+            0x00401228      8955fc         mov dword [ebp - 4], edx
+            0x0040122b      8b45fc         mov eax, dword [ebp - 4]
+            0x0040122e      50             push eax
+            0x0040122f      8d8d60feffff   lea ecx, [ebp - 0x1a0]
+            0x00401235      51             push ecx
+            0x00401236      e885020000     call 0x4014c0               ;[3] ; strcmp
+            0x0040123b      83c408         add esp, 8
+            0x0040123e      85c0           test eax, eax
+        ,=< 0x00401240      740a           je 0x40124c                 ;if comparison fails (eax = 0), then program exits
+
+4. At 0x00401133, the malware is dynamically initializing the encoded hostname ( 1qaz2wsx3edc) , and "ocl.exe"
+5. The encoded string 1qaz2wsx3edc and the pointer to a buffer holding a 32bit "key" to the subroutine at 0x401089.
+6. Domain name is www.practicalmalwareanalysis.com
+7. The subroutine at 0x401089 is a XOR decryption loop. The loop iterates 32 times (length of "www.practicalmalwareanalysis.com") and continuously XOR's a byte of string with the constant key. idiv is used to calculate the modulo
+so the XOR can "wrap around" when it exceeds the length of the string. 
+
+.text:004010EC mov     edx, [ebp+key] 
+.text:004010EF add     edx, [ebp+index] ; Add
+.text:004010F5 movsx   ecx, byte ptr [edx] ; Move with Sign-Extend
+.text:004010F8 mov     eax, [ebp+index]
+.text:004010FE cdq                     ; EAX -> EDX:EAX (with sign)
+.text:004010FF idiv    [ebp+strlen]    ; Signed Divide
+.text:00401105 mov     eax, [ebp+hostname]
+.text:00401108 movsx   edx, byte ptr [eax+edx] ; Move with Sign-Extend
+.text:0040110C xor     ecx, edx        ; Logical Exclusive OR
+.text:0040110E mov     eax, [ebp+index]
+.text:00401114 mov     [ebp+eax+buffer], cl
+.text:0040111B jmp     short loc_4010D4 ; 
+
+8. The CreateProcess call modifies the Input, Output, and Error handles of StartupInfo struct to point to the 
+handle of the socket that it created earlier. This effectively creates a local shell that could potentially be
+connected to remotely, allowing an attacker to input commands and read their output on the same socket connection.
+
+.text:00401041 mov     edx, [ebp+arg_10]
+.text:00401044 mov     [ebp+StartupInfo.hStdInput], edx
+.text:00401047 mov     eax, [ebp+StartupInfo.hStdInput]
+.text:0040104A mov     [ebp+StartupInfo.hStdError], eax
+.text:0040104D mov     ecx, [ebp+StartupInfo.hStdError]
+.text:00401050 mov     [ebp+StartupInfo.hStdOutput], ecx
+
