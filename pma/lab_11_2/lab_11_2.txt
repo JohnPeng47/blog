@@ -1,8 +1,8 @@
-1. The malware exports a function called installer. It overwrites the key HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows\AppInit_Dlls
-and copies an existing file called spoolvxx32.dll into the systems directory.
+1. The malware exports a function called installer. It overwrites the key HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\
+Windows\AppInit_Dlls and copies an existing file called spoolvxx32.dll into the systems directory.
 
-2&3. The malware assumes a configuration file called Lab11-02.ini to already exist in the systems directory. Note that CreateFile with dwCreationDisposition
-equal to 3 will open existing file and return its handle.
+2&3. The malware assumes a configuration file called Lab11-02.ini to already exist in the systems directory. Note that CreateFile with 
+dwCreationDisposition equal to 3 will open existing file and return its handle.
 
 .text:10001651 call    get_sys_directory
 .text:10001656 mov     [ebp+Dest], eax
@@ -34,8 +34,8 @@ that import User32.dll.
 The malware gets snapshot of the current process(CreateToolhelp32Snapshot), and loops through its current running threads (Thread32First) 
 in order to locate the thread that has the same PID as returned from getCurrentProcessId. The thread is then suspended.
 
-5. The malware uses inline hooking on the send function from winsock32.dll, replacing the first 5 bytes of the function with a jump to its
-own code.
+5. The malware uses inline hooking on the send function from winsock32.dll, replacing the first 5 bytes of the function with a jump to
+its own code.
 
 Module, function to be hooked, hook callback and some buffer address is passed to the get_hook_addr function
 .text:10001561 E8 57 FE FF FF    call    suspend_curr_thread  
